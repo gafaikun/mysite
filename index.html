@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none">
+<title>Blackbox OS - Authorization Portal</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+:root{--c:#00ffff;--bg:#01070a;--wb:rgba(0,14,20,0.92);--bc:rgba(0,255,255,0.35);--gold:#ffbd59;}
+*{box-sizing:border-box;margin:0;padding:0; -webkit-tap-highlight-color: transparent;}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+  color:var(--c);font-family:'Share Tech Mono','Courier New',monospace;user-select:none;}
+
+/* ── 背景底色與顯著網格 ── */
+#bg-gradient {position:fixed;inset:0;z-index:-1;
+  background:radial-gradient(circle at 50% 50%, #031c26 0%, #010406 100%);}
+#bg-grid{position:fixed;inset:0;z-index:0;pointer-events:none;}
+#bg-grid canvas{position:absolute;inset:0;width:100%;height:100%;}
+
+/* CRT 掃描線 */
+.crt{position:fixed;inset:0;pointer-events:none;z-index:9999;
+  background:linear-gradient(to bottom,rgba(0,0,0,0) 50%,rgba(0,0,0,0.18) 50%);
+  background-size:100% 3px;}
+.scanline{position:fixed;inset:0;pointer-events:none;z-index:9998;
+  background:linear-gradient(to bottom,rgba(0,255,255,0) 0%,rgba(0,255,255,0.05) 8%,rgba(0,255,255,0) 18%);
+  animation:scanA 8s linear infinite;}
+@keyframes scanA{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}
+
+/* Topbar */
+#topbar{position:fixed;top:0;left:0;width:100%;height:44px;background:rgba(0,255,255,0.06);
+  border-bottom:1px solid var(--bc);display:flex;justify-content:space-between;align-items:center;
+  padding:0 16px;font-size:12px;z-index:600;text-shadow:0 0 6px var(--c);}
+
+/* 呼吸閃爍 */
+@keyframes flk{0%,100%{opacity:1}50%{opacity:.5}}
+.flash-text{animation:flk 1.5s infinite;}
+
+/* 神奇特效：矩陣代碼粒子畫布 */
+#effect-canvas {position:absolute;inset:0;z-index:1;pointer-events:none;display:none;}
+</style>
+</head>
+<body>
+
+<div id="bg-gradient"></div>
+<div id="bg-grid"><canvas id="grid-cv"></canvas></div>
+<div class="crt"></div>
+<div class="scanline"></div>
+
+<!-- 系統安全同步初始化引導遮罩 (防止載入與雲端握手時發生閃爍) -->
+<div id="panel-boot" class="fixed inset-0 bg-[#01070a] flex flex-col items-center justify-center z-[1500] transition-opacity duration-500">
+  <div class="text-center">
+    <div class="w-12 h-12 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mb-4 mx-auto"></div>
+    <div class="text-xs text-cyan-400 tracking-[0.2em] uppercase flash-text font-mono">SYS://SECURE_CONNECTING...</div>
+  </div>
+</div>
+
+<!-- Topbar -->
+<div id="topbar">
+  <div class="flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-ping"></span>
+    <span class="font-bold tracking-wider text-[11px] sm:text-[12px]">SYS://AUTH_GATE_V4</span>
+  </div>
+  <div class="flex items-center gap-3 sm:gap-4 text-[10px] sm:text-[12px]">
+    <!-- 系統資源監控與時鐘元件 -->
+    <span class="hidden md:inline text-cyan-400/80">CPU <span id="cpu-n" class="font-bold text-white">--</span>%</span>
+    <span class="hidden md:inline text-cyan-400/80">MEM <span id="mem-n" class="font-bold text-white">--</span>%</span>
+    <span id="clk" class="font-bold text-white tracking-widest bg-cyan-950/30 px-2 py-0.5 rounded border border-cyan-400/20">00:00:00</span>
+    
+    <span class="text-[10px] opacity-60 hidden sm:inline">PROB_SYNC: ON</span>
+    <!-- 管理員按鈕 -->
+    <button id="admin-btn" class="border border-cyan-400/40 bg-cyan-950/40 px-2 py-1 rounded text-[11px] active:bg-cyan-400 active:text-black transition-all">
+      ⚙️ 管理員系統
+    </button>
+  </div>
+</div>
+
+<!-- 主容器 -->
+<div class="relative w-full h-full flex items-center justify-center p-4 z-10">
+  <canvas id="effect-canvas"></canvas>
+
+  <!-- 1. 抽獎主面板 (安全起見：預設 hidden，驗證通過後才由 JS 決定是否顯示) -->
+  <div id="panel-draw" class="hidden w-full max-w-md bg-slate-950/90 border border-cyan-400/30 rounded-lg p-6 flex flex-col items-center justify-center text-center backdrop-blur-md shadow-[0_0_30px_rgba(0,255,255,0.15)] relative overflow-hidden transition-all duration-500">
+    <!-- 科技外框角點 -->
+    <div class="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-cyan-400"></div>
+    <div class="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-cyan-400"></div>
+    <div class="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-cyan-400"></div>
+    <div class="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-cyan-400"></div>
+
+    <div class="mb-6">
+      <div class="text-[11px] tracking-[0.2em] opacity-50 mb-1">SECURITY STATUS: HIGH</div>
+      <h2 class="text-xl font-bold tracking-widest text-white mb-2">系統權限變更請求</h2>
+      <p class="text-xs text-cyan-400/70 max-w-[280px] mx-auto leading-relaxed">此操作將嘗試向主伺服器申請更高一級安全權限，請確保本機指紋與生物脈衝特徵同步穩定。</p>
+    </div>
+
+    <!-- 抽獎按鈕 -->
+    <button id="draw-btn" class="w-full py-4 bg-gradient-to-r from-cyan-600/30 to-cyan-400/30 hover:from-cyan-500/40 hover:to-cyan-300/40 border border-cyan-400 text-white font-bold tracking-[0.2em] rounded shadow-[0_0_15px_rgba(0,255,255,0.3)] active:scale-[0.98] transition-all text-sm md:text-base relative overflow-hidden">
+      嘗試獲取更高一級權限
+    </button>
+
+    <!-- 可動態開啟的主頁重置按鈕 -->
+    <button id="draw-reset-btn" class="hidden mt-3 w-full py-2.5 border border-dashed border-cyan-400/40 text-cyan-400/70 hover:text-cyan-300 hover:border-cyan-400 text-xs rounded tracking-widest transition-all">
+      重置安全冷卻 (RESET COOLDOWN)
+    </button>
+  </div>
+
+  <!-- 2. 中獎結果面板 1 (更高一級權限) - 僅向解鎖的管理員提供回退按鈕 -->
+  <div id="panel-win-normal" class="hidden w-full max-w-md bg-slate-950/95 border-2 border-emerald-500/50 rounded-lg p-6 flex flex-col items-center justify-center text-center backdrop-blur-md shadow-[0_0_40px_rgba(16,185,129,0.3)] relative">
+    <div class="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-emerald-400"></div>
+    <div class="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-emerald-400"></div>
+    
+    <div class="w-16 h-16 rounded-full border-2 border-emerald-500 flex items-center justify-center mb-4 bg-emerald-950/30 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
+      <span class="text-3xl text-emerald-400">✓</span>
+    </div>
+    
+    <h3 class="text-emerald-400 font-bold tracking-[0.2em] text-lg mb-3">ACCESS GRANTED</h3>
+    <p class="text-white text-sm leading-relaxed tracking-wider mb-2 px-2">你已經獲得更高一級權限，請聯繫管理員接管更深層次內容。</p>
+    <div class="text-[10px] text-emerald-400/60 tracking-widest mt-4 uppercase animate-pulse">SYSTEM CHANNELS LOCKED IN SECURE STATE</div>
+
+    <!-- 管理員特權返回按鈕 -->
+    <button id="admin-bypass-normal" onclick="backToDraw()" class="hidden mt-5 px-5 py-2 border border-emerald-500/60 bg-emerald-950/20 text-emerald-400 text-[11px] rounded tracking-widest active:bg-emerald-500 active:text-black transition-all">
+      管理員強行回退 (ADMIN BYPASS)
+    </button>
+  </div>
+
+  <!-- 3. 中獎結果面板 2 (超低概率奇蹟) - 僅向解鎖的管理員提供回退按鈕 -->
+  <div id="panel-win-special" class="hidden w-full max-w-md bg-slate-950/95 border-2 border-amber-500/60 rounded-lg p-6 flex flex-col items-center justify-center text-center backdrop-blur-md shadow-[0_0_40px_rgba(245,158,11,0.4)] relative">
+    <div class="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-amber-400"></div>
+    <div class="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-amber-400"></div>
+    
+    <div class="w-16 h-16 rounded-full border-2 border-amber-500 flex items-center justify-center mb-4 bg-amber-950/30 shadow-[0_0_20px_rgba(245,158,11,0.5)] animate-pulse">
+      <span class="text-3xl text-amber-400">✦</span>
+    </div>
+    
+    <h3 class="text-amber-400 font-bold tracking-[0.2em] text-lg mb-2">SUPREME ANOMALY DETESS</h3>
+    <p class="text-amber-200/90 text-xs tracking-widest mb-4">發現超低深度溢出級安全漏洞！</p>
+    <p class="text-white text-sm leading-relaxed mb-2 px-2">恭喜你，遇到超低概率權限，可在獲取最高一級權限的情況下額外領取一件禮品，請聯繫管理員領取。</p>
+    <div class="text-[10px] text-amber-400/60 tracking-widest mt-4 uppercase animate-pulse">SUPREME PRIVILEGE ACTIVATED PERMANENTLY</div>
+
+    <!-- 管理員特權返回按鈕 -->
+    <button id="admin-bypass-special" onclick="backToDraw()" class="hidden mt-5 px-5 py-2 border border-amber-500/60 bg-amber-950/20 text-amber-400 text-[11px] rounded tracking-widest active:bg-amber-500 active:text-black transition-all">
+      管理員強行回退 (ADMIN BYPASS)
+    </button>
+  </div>
+
+  <!-- 4. 失敗落空面板 (倒計時) -->
+  <div id="panel-fail" class="hidden w-full max-w-md bg-slate-950/95 border border-red-500/40 rounded-lg p-6 flex flex-col items-center justify-center text-center backdrop-blur-md shadow-[0_0_30px_rgba(239,68,68,0.15)] relative">
+    <div class="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-red-500"></div>
+    <div class="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-red-500"></div>
+    
+    <div class="w-12 h-12 rounded-full border border-red-500 flex items-center justify-center mb-4 bg-red-950/10">
+      <span class="text-xl text-red-500 font-bold">!</span>
+    </div>
+    
+    <h3 class="text-red-500 font-bold tracking-[0.15em] text-sm mb-2">ACCESS DENIED // 同步失敗</h3>
+    <p class="text-slate-300 text-xs mb-4 max-w-[280px]">很抱歉，獲取更高一級權限失敗，需等待120分鐘後重新獲取。</p>
+    
+    <!-- 倒計時時鐘 -->
+    <div class="bg-red-950/20 border border-red-500/30 px-6 py-3 rounded mb-4">
+      <div id="countdown-clock" class="text-2xl font-bold text-red-400 tracking-widest">02:00:00</div>
+      <div class="text-[9px] opacity-40 mt-1 uppercase">SECURITY LOCKDOWN IN PROGRESS</div>
+    </div>
+
+    <!-- 可動態開啟的主頁重置按鈕 -->
+    <button id="fail-reset-btn" class="hidden w-full py-2 border border-dashed border-red-500/30 text-red-400/70 hover:text-red-300 hover:border-red-400 text-xs rounded tracking-widest mb-4 transition-all">
+      重置安全冷卻 (RESET COOLDOWN)
+    </button>
+
+    <div class="text-[9px] text-red-500/60 tracking-wider">雙重安全機制已鎖定本端連接</div>
+  </div>
+
+  <!-- 5. 管理員身份驗證 Modal -->
+  <div id="modal-auth" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[2000] backdrop-blur-sm">
+    <div class="w-full max-w-xs bg-slate-950 border border-cyan-400 p-5 rounded-lg text-center relative shadow-[0_0_30px_rgba(0,255,255,0.2)]">
+      <h3 class="text-sm font-bold tracking-widest mb-4">🛡️ 安全驗證 // SECURITY SHIELD</h3>
+      <p class="text-[10px] opacity-50 mb-3">請輸入管理員金鑰解鎖控制權限</p>
+      
+      <input type="password" id="auth-key-input" class="w-full bg-slate-900 border border-cyan-400/50 px-3 py-2 text-center text-white tracking-widest text-sm focus:outline-none focus:border-cyan-400 mb-4" placeholder="•••••••••">
+      
+      <div class="flex gap-2">
+        <button id="auth-cancel-btn" class="w-1/2 py-2 border border-red-500/50 text-red-400 text-xs rounded active:bg-red-500 active:text-black">取消</button>
+        <button id="auth-submit-btn" class="w-1/2 py-2 bg-cyan-950/50 border border-cyan-400 text-cyan-400 text-xs rounded active:bg-cyan-400 active:text-black">確認解鎖</button>
+      </div>
+      <div id="auth-error" class="hidden text-red-400 text-[10px] mt-2 animate-bounce">金鑰無效，請求拒絕</div>
+    </div>
+  </div>
+
+  <!-- 6. 管理員控制台 Modal -->
+  <div id="modal-admin" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[2000] backdrop-blur-sm">
+    <div class="w-full max-w-sm bg-slate-950 border border-cyan-400 p-6 rounded-lg relative shadow-[0_0_30px_rgba(0,255,255,0.25)] h-[90vh] overflow-y-auto sc">
+      <div class="flex justify-between items-center border-b border-cyan-400/20 pb-3 mb-4">
+        <h3 class="text-sm font-bold tracking-widest text-white">🛰️ 伺服器概率中樞控制台</h3>
+        <button id="admin-close-btn" class="text-xs text-red-400 hover:text-red-300 font-bold">[關閉]</button>
+      </div>
+
+      <!-- 普通概率設定 (新增0%按鈕，優化為5列布局) -->
+      <div class="mb-5">
+        <label class="text-[11px] opacity-60 block mb-2 tracking-wider">🟢 標準權限中獎率 (STANDARD WIN RATE)</label>
+        <div class="grid grid-cols-5 gap-1.5">
+          <button onclick="setNormalRate(0)" id="nr-0" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">0%</button>
+          <button onclick="setNormalRate(1)" id="nr-1" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">1%</button>
+          <button onclick="setNormalRate(15)" id="nr-15" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">15%</button>
+          <button onclick="setNormalRate(50)" id="nr-50" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">50%</button>
+          <button onclick="setNormalRate(100)" id="nr-100" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">100%</button>
+        </div>
+      </div>
+
+      <!-- 超低概率設定 -->
+      <div class="mb-5">
+        <label class="text-[11px] opacity-60 block mb-2 tracking-wider">🟡 額外禮品中獎率 (SPECIAL GIFT RATE)</label>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="setSpecialRate(0.05)" id="sr-005" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">0.05%</button>
+          <button onclick="setSpecialRate(100)" id="sr-100" class="py-1.5 border border-cyan-400/30 text-xs rounded active:bg-cyan-400 active:text-black">100%</button>
+        </div>
+      </div>
+
+      <!-- 主頁重置按鈕開關控制 -->
+      <div class="mb-5">
+        <label class="text-[11px] opacity-60 block mb-2 tracking-wider">🔒 主頁冷卻重置按鈕開關 (COOLDOWN BUTTON CONTROL)</label>
+        <div class="flex items-center justify-between bg-slate-900 border border-cyan-400/20 p-2.5 rounded">
+          <span class="text-xs text-slate-300">顯示主頁重置按鈕</span>
+          <button onclick="toggleMainResetBtn()" id="toggle-reset-btn" class="px-4 py-1 border text-[10px] rounded tracking-widest transition-all">
+            --
+          </button>
+        </div>
+      </div>
+
+      <!-- 操作測試區 -->
+      <div class="border-t border-cyan-400/20 pt-4 flex flex-col gap-2">
+        <div class="text-[10px] opacity-40 mb-1 tracking-widest text-center">⚙️ 快捷系統偵測調校</div>
+        
+        <!-- 管理員測試按鈕 -->
+        <button onclick="adminImmediateTest()" class="w-full py-2.5 bg-gradient-to-r from-emerald-600/20 to-emerald-400/20 border border-emerald-400 text-emerald-300 text-xs rounded font-bold tracking-widest active:scale-[0.98] transition-all">
+          管理員直接測試（免除冷卻機制）
+        </button>
+
+        <!-- 關閉管理員權限按鈕 (退出管理員身份) -->
+        <button onclick="revokeAdminPrivilege()" class="w-full py-2 bg-red-950/30 border border-red-500 text-red-400 text-xs rounded font-bold tracking-widest active:scale-[0.98] transition-all">
+          關閉管理員權限 (REVOKE ADMIN)
+        </button>
+
+        <div class="flex gap-2 mt-1">
+          <button onclick="resetLocalCooldown()" class="w-1/2 py-2 border border-slate-600 text-slate-400 text-[10px] rounded active:bg-slate-700 active:text-white">
+            重置本機120m冷卻
+          </button>
+          <button onclick="restoreDefaults()" class="w-1/2 py-2 border border-red-500/30 text-red-400/80 text-[10px] rounded active:bg-red-500 active:text-black">
+            重設系統初始值
+          </button>
+        </div>
+      </div>
+
+      <!-- 本地狀態/雲端同步狀態提示 -->
+      <div id="sync-status-indicator" class="text-[8px] text-slate-500 text-center mt-4">
+        [ MODE: STANDALONE LOCAL OFFLINE ]
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全域安全通知提示 Toast Container -->
+<div id="cyber-toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-950/95 border border-cyan-400 text-cyan-400 px-5 py-2.5 text-xs tracking-[0.15em] rounded shadow-[0_0_20px_rgba(0,255,255,0.25)] z-[9999] backdrop-blur-md"></div>
+
+<script type="module">
+// ═══════════════════════════════════════════════════
+// FIRBASE INTEGRATION (如果配置存在)
+// ═══════════════════════════════════════════════════
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+// 本機變數設定，如果不存在 Firebase 則運行在 Local 模式下
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'cyber-lottery-system';
+let db = null;
+let auth = null;
+let isCloudSynced = false;
+let currentUser = null; // 追蹤當前雲端訪客對象，供冷卻時間雲端同步
+
+// 預設概率與按鈕顯示狀態
+let localDrawSettings = {
+  normalRate: 15,    // 預設為 15%
+  specialRate: 0.05, // 預設為 0.05%
+  showMainResetBtn: false // 預設不在前台顯示冷卻重置按鈕
+};
+
+// 安全初始化
+try {
+  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+    const firebaseConfig = JSON.parse(__firebase_config);
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    isCloudSynced = true;
+    const syncIndicator = document.getElementById('sync-status-indicator');
+    if (syncIndicator) {
+      syncIndicator.innerText = `[ MODE: SECURE REALTIME CLOUD | APPID: ${appId} ]`;
+    }
+  }
+} catch (e) {
+  console.warn("Firebase config not found. Running in standalone secure local mode.", e);
+}
+
+// ═══════════════════════════════════════════════════
+// 授權與實時訂閱 (雲端同步 ＋ 訪客冷卻時間雲端同步)
+// ═══════════════════════════════════════════════════
+if (isCloudSynced && db && auth) {
+  const initAuthAndSync = async () => {
+    try {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        currentUser = (await signInWithCustomToken(auth, __initial_auth_token)).user;
+      } else {
+        currentUser = (await signInAnonymously(auth)).user;
+      }
+      
+      // 1. 監聽雲端概率與設定
+      const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'drawSettings');
+      onSnapshot(settingsDocRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          localDrawSettings.normalRate = Number(data.normalRate);
+          localDrawSettings.specialRate = Number(data.specialRate);
+          localDrawSettings.showMainResetBtn = !!data.showMainResetBtn;
+          updateUIState();
+        } else {
+          setDoc(settingsDocRef, localDrawSettings);
+        }
+      }, (err) => {
+        console.error("Firestore listen error: ", err);
+      });
+
+      // 2. 獲取該用戶在雲端的冷卻數據 (完美應對臨時 Blob/Iframe 刷新清空 LocalStorage 的狀況)
+      if (currentUser) {
+        const userCooldownDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'state', 'cooldown');
+        const cooldownSnap = await getDoc(userCooldownDocRef);
+        if (cooldownSnap.exists()) {
+          const cloudCooldownEnd = Number(cooldownSnap.data().cooldownEndTime);
+          if (cloudCooldownEnd && cloudCooldownEnd > Date.now()) {
+            cooldownEndTime = cloudCooldownEnd;
+            startCooldownCountdown();
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error("Auth / Sync error: ", err);
+      isCloudSynced = false; // 退回到本機運作
+    } finally {
+      // 延遲關閉開機初始化引導畫面，確保雲端握手完成
+      completeSystemBoot();
+    }
+  };
+  initAuthAndSync();
+} else {
+  // Standalone 本地模式：從 LocalStorage 恢復概率 (若有)
+  const savedSettings = localStorage.getItem('draw_settings');
+  if (savedSettings) {
+    try {
+      localDrawSettings = JSON.parse(savedSettings);
+    } catch(e) {}
+  }
+  // 本地模式沒有異步雲端，直接結束 Boot 載入
+  setTimeout(completeSystemBoot, 100);
+}
+
+// 結束開機初始化遮罩，避免頁面閃爍
+function completeSystemBoot() {
+  const bootPanel = document.getElementById('panel-boot');
+  if (bootPanel) {
+    bootPanel.classList.add('opacity-0');
+    setTimeout(() => {
+      bootPanel.classList.add('hidden');
+    }, 500);
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// 顯著的發光網格背景與隨機微亮交點 (帶有全域動畫幀清理)
+// ═══════════════════════════════════════════════════
+(function(){
+  const cv = document.getElementById('grid-cv');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const SZ = 80;
+  let offset = 0;
+
+  function resize() {
+    if (cv) {
+      cv.width = window.innerWidth;
+      cv.height = window.innerHeight;
+    }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function drawGrid(){
+    try {
+      if (!cv || !ctx) return;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      
+      // 主格線
+      ctx.strokeStyle = 'rgba(0,255,255,0.11)';
+      ctx.lineWidth = 1.2;
+      const o = offset % SZ;
+      for(let x = -SZ + o; x < cv.width + SZ; x += SZ){
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke();
+      }
+      for(let y = -SZ + o; y < cv.height + SZ; y += SZ){
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cv.width, y); ctx.stroke();
+      }
+      
+      // 細格線
+      ctx.strokeStyle = 'rgba(0,255,255,0.04)';
+      ctx.lineWidth = 0.6;
+      const s2 = SZ/4, o2 = (offset*0.5) % s2;
+      for(let x = -s2 + o2; x < cv.width + s2; x += s2){
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke();
+      }
+      for(let y = -s2 + o2; y < cv.height + s2; y += s2){
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cv.width, y); ctx.stroke();
+      }
+
+      // 發光交點隨機粒子效果
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.45)';
+      for(let x = -SZ + o; x < cv.width + SZ; x += SZ){
+        for(let y = -SZ + o; y < cv.height + SZ; y += SZ){
+          if (x >= 0 && x <= cv.width && y >= 0 && y <= cv.height) {
+            ctx.beginPath();
+            const r = 2.0 + Math.sin(offset * 0.08 + (x+y)*0.012) * 1.0;
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      offset += 0.45;
+      window.gridAnimationId = requestAnimationFrame(drawGrid);
+    } catch (e) {
+      // 捕獲在 iframe 銷毀時發生的 DOM 操作錯誤
+    }
+  }
+
+  if (window.gridAnimationId) {
+    cancelAnimationFrame(window.gridAnimationId);
+  }
+  drawGrid();
+})();
+
+// ═══════════════════════════════════════════════════
+// 全域資訊確認通知提示（Toast）
+// ═══════════════════════════════════════════════════
+function showToast(msg) {
+  const toast = document.getElementById('cyber-toast');
+  if (toast) {
+    toast.innerHTML = `[!] ${msg}`;
+    toast.classList.remove('hidden');
+    if (window.toastTimeout) clearTimeout(window.toastTimeout);
+    window.toastTimeout = setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 2800);
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// 管理員安全彈窗 & 管理員邏輯 (全面 null 安全化)
+// ═══════════════════════════════════════════════════
+const adminBtn = document.getElementById('admin-btn');
+const modalAuth = document.getElementById('modal-auth');
+const modalAdmin = document.getElementById('modal-admin');
+const authKeyInput = document.getElementById('auth-key-input');
+const authSubmitBtn = document.getElementById('auth-submit-btn');
+const authCancelBtn = document.getElementById('auth-cancel-btn');
+const authError = document.getElementById('auth-error');
+const adminCloseBtn = document.getElementById('admin-close-btn');
+
+let isAdminVerified = false;
+
+if (adminBtn) {
+  adminBtn.onclick = () => {
+    if (isAdminVerified) {
+      if (modalAdmin) modalAdmin.classList.remove('hidden');
+      updateAdminUI();
+    } else {
+      if (modalAuth) modalAuth.classList.remove('hidden');
+      if (authKeyInput) {
+        authKeyInput.value = '';
+        authKeyInput.focus();
+      }
+      if (authError) authError.classList.add('hidden');
+    }
+  };
+}
+
+if (authCancelBtn) {
+  authCancelBtn.onclick = () => {
+    if (modalAuth) modalAuth.classList.add('hidden');
+  };
+}
+
+if (authSubmitBtn) {
+  authSubmitBtn.onclick = verifyPassphrase;
+}
+if (authKeyInput) {
+  authKeyInput.onkeydown = (e) => {
+    if (e.key === 'Enter') verifyPassphrase();
+  };
+}
+
+function verifyPassphrase() {
+  if (!authKeyInput) return;
+  if (authKeyInput.value === 'meisikun114') {
+    isAdminVerified = true;
+    if (modalAuth) modalAuth.classList.add('hidden');
+    if (modalAdmin) modalAdmin.classList.remove('hidden');
+    updateAdminUI();
+    updateAdminBypassUI();
+    showToast("管理員授權解鎖成功 // ACCESS UNLOCKED");
+  } else {
+    if (authError) authError.classList.remove('hidden');
+  }
+}
+
+if (adminCloseBtn) {
+  adminCloseBtn.onclick = () => {
+    if (modalAdmin) modalAdmin.classList.add('hidden');
+  };
+}
+
+// 動態更新管理員解鎖特權返回按鈕的顯示狀態
+function updateAdminBypassUI() {
+  const bypassNormal = document.getElementById('admin-bypass-normal');
+  const bypassSpecial = document.getElementById('admin-bypass-special');
+  
+  if (isAdminVerified) {
+    if (bypassNormal) bypassNormal.classList.remove('hidden');
+    if (bypassSpecial) bypassSpecial.classList.remove('hidden');
+  } else {
+    if (bypassNormal) bypassNormal.classList.add('hidden');
+    if (bypassSpecial) bypassSpecial.classList.add('hidden');
+  }
+}
+
+// 關閉管理員權限並登出 (主動撤銷特權狀態)
+window.revokeAdminPrivilege = () => {
+  isAdminVerified = false;
+  if (modalAdmin) modalAdmin.classList.add('hidden');
+  updateUIState();
+  showToast("管理員安全憑證已撤銷 // SESSION REVOKED");
+};
+
+// 同步更新管理員設定界面高亮狀態
+function updateAdminUI() {
+  // 標準概率
+  const ratesN = [0, 1, 15, 50, 100];
+  ratesN.forEach(r => {
+    const el = document.getElementById(`nr-${r}`);
+    if (el) {
+      if (localDrawSettings.normalRate === r) {
+        el.className = "py-1.5 border border-cyan-400 bg-cyan-400 text-black font-bold text-xs rounded transition-all";
+      } else {
+        el.className = "py-1.5 border border-cyan-400/30 text-cyan-400 text-xs rounded hover:bg-cyan-950/20 transition-all";
+      }
+    }
+  });
+
+  // 超低概率
+  const ratesS = [0.05, 100];
+  ratesS.forEach(r => {
+    const elId = r === 0.05 ? "sr-005" : "sr-100";
+    const el = document.getElementById(elId);
+    if (el) {
+      if (localDrawSettings.specialRate === r) {
+        el.className = "py-1.5 border border-amber-500 bg-amber-500 text-black font-bold text-xs rounded transition-all";
+      } else {
+        el.className = "py-1.5 border border-amber-500/30 text-amber-500 text-xs rounded hover:bg-amber-950/20 transition-all";
+      }
+    }
+  });
+
+  // 主頁重置按鈕開關按鈕樣式
+  const toggleBtn = document.getElementById('toggle-reset-btn');
+  if (toggleBtn) {
+    if (localDrawSettings.showMainResetBtn) {
+      toggleBtn.innerText = "開啟";
+      toggleBtn.className = "px-4 py-1 border border-emerald-500 bg-emerald-950/30 text-emerald-400 text-[10px] rounded tracking-widest active:bg-emerald-500 active:text-black transition-all font-bold shadow-[0_0_8px_rgba(16,185,129,0.2)]";
+    } else {
+      toggleBtn.innerText = "關閉";
+      toggleBtn.className = "px-4 py-1 border border-red-500/50 bg-red-950/20 text-red-400 text-[10px] rounded tracking-widest active:bg-red-500 active:text-black transition-all";
+    }
+  }
+}
+
+// 修改概率並保存 (雲端或本地) + 加入反饋
+window.setNormalRate = async function(rate) {
+  localDrawSettings.normalRate = rate;
+  updateUIState();
+  updateAdminUI();
+  await persistSettings();
+  showToast(`標準權限中獎率已成功調校為: ${rate}%`);
+};
+
+window.setSpecialRate = async function(rate) {
+  localDrawSettings.specialRate = rate;
+  updateUIState();
+  updateAdminUI();
+  await persistSettings();
+  showToast(`特別禮品中獎率已成功調校為: ${rate}%`);
+};
+
+// 狀態切換：顯示/隱藏主頁冷卻重置按鈕
+window.toggleMainResetBtn = async function() {
+  localDrawSettings.showMainResetBtn = !localDrawSettings.showMainResetBtn;
+  updateUIState();
+  updateAdminUI();
+  await persistSettings();
+  showToast(localDrawSettings.showMainResetBtn ? "主頁冷卻重置功能 [已啟用]" : "主頁冷卻重置功能 [已停用]");
+};
+
+async function persistSettings() {
+  if (isCloudSynced && db) {
+    const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'drawSettings');
+    await setDoc(settingsDocRef, localDrawSettings);
+  } else {
+    localStorage.setItem('draw_settings', JSON.stringify(localDrawSettings));
+  }
+}
+
+window.restoreDefaults = async function() {
+  localDrawSettings = { normalRate: 15, specialRate: 0.05, showMainResetBtn: false };
+  updateUIState();
+  updateAdminUI();
+  await persistSettings();
+  showToast("中樞控制系統已重設為 [初始預設值]");
+};
+
+// ═══════════════════════════════════════════════════
+// 雙通道防作弊儲存邏輯 (LocalStorage + Cookie + 雲端 Firestore 三重同步防禦備份)
+// ═══════════════════════════════════════════════════
+function writeCooldownData(endTime) {
+  // 1. 本地儲存備份
+  try {
+    localStorage.setItem('draw_cooldown_end', endTime);
+  } catch (e) {
+    console.warn("LocalStorage write blocked:", e);
+  }
+  // 2. Cookie 儲存備份
+  try {
+    document.cookie = "draw_cooldown_end=" + endTime + "; max-age=9000; path=/; SameSite=Lax";
+  } catch (e) {
+    console.warn("Cookie write blocked:", e);
+  }
+  // 3. 雲端同步儲存 (確保臨時 Blob/Iframe 刷新環境中依然能強固鎖死)
+  if (isCloudSynced && db && currentUser) {
+    try {
+      const userCooldownDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'state', 'cooldown');
+      setDoc(userCooldownDocRef, { cooldownEndTime: endTime });
+    } catch (e) {
+      console.error("Cloud cooldown sync failed:", e);
+    }
+  }
+}
+
+function eraseCooldownData() {
+  try {
+    localStorage.removeItem('draw_cooldown_end');
+  } catch (e) {}
+  try {
+    document.cookie = "draw_cooldown_end=; max-age=0; path=/";
+  } catch (e) {}
+  if (isCloudSynced && db && currentUser) {
+    try {
+      const userCooldownDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'state', 'cooldown');
+      setDoc(userCooldownDocRef, { cooldownEndTime: 0 });
+    } catch (e) {}
+  }
+}
+
+function fetchCooldownData() {
+  // 1. 優先嘗試讀取與校驗穩定且不隨意被清空的 Cookie 紀錄
+  try {
+    const cookies = document.cookie.split(';');
+    for (let i = 0; i < cookies.length; i++) {
+      const c = cookies[i].trim();
+      if (c.startsWith('draw_cooldown_end=')) {
+        const val = Number(c.substring('draw_cooldown_end='.length));
+        if (val) return val;
+      }
+    }
+  } catch (e) {
+    console.warn("Cookie read blocked:", e);
+  }
+
+  // 2. 次要嘗試讀取 LocalStorage 紀錄 (當 Cookie 遭安全性沙盒政策阻擋時無縫備份)
+  try {
+    const savedEnd = localStorage.getItem('draw_cooldown_end');
+    if (savedEnd) {
+      const val = Number(savedEnd);
+      if (val) return val;
+    }
+  } catch (e) {
+    console.warn("LocalStorage read blocked:", e);
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════
+// 抽獎核心邏輯、冷卻倒計時與動態神奇特效
+// ═══════════════════════════════════════════════════
+const drawBtn = document.getElementById('draw-btn');
+const countdownClock = document.getElementById('countdown-clock');
+const panelDraw = document.getElementById('panel-draw');
+const panelWinNormal = document.getElementById('panel-win-normal');
+const panelWinSpecial = document.getElementById('panel-win-special');
+const panelFail = document.getElementById('panel-fail');
+const effectCanvas = document.getElementById('effect-canvas');
+const effCtx = effectCanvas ? effectCanvas.getContext('2d') : null;
+
+let cooldownEndTime = null;
+
+// 定期獲取本地儲存與 Cookie 的冷卻狀態
+function checkCooldown() {
+  const savedEnd = fetchCooldownData();
+  if (savedEnd && savedEnd > Date.now()) {
+    cooldownEndTime = savedEnd;
+    startCooldownCountdown();
+    return true; // 當前仍處於冷卻中
+  } else {
+    eraseCooldownData();
+    cooldownEndTime = null;
+    return false; // 當前無冷卻限制
+  }
+}
+
+// 啟動120分鐘安全鎖定倒計時 (帶有全域 interval 清理，解決 iframe 殘留問題)
+function startCooldownCountdown() {
+  switchPanel(panelFail);
+  if (window.countdownTimer) {
+    clearInterval(window.countdownTimer);
+  }
+  
+  window.countdownTimer = setInterval(() => {
+    try {
+      const diff = cooldownEndTime - Date.now();
+      if (diff <= 0) {
+        if (window.countdownTimer) {
+          clearInterval(window.countdownTimer);
+          window.countdownTimer = null;
+        }
+        eraseCooldownData();
+        cooldownEndTime = null;
+        switchPanel(panelDraw);
+      } else {
+        const h = String(Math.floor(diff / 3600000)).padStart(2, '0');
+        const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
+        const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
+        const clockEl = document.getElementById('countdown-clock');
+        if (clockEl) clockEl.innerText = `${h}:${m}:${s}`;
+      }
+    } catch (e) {
+      // 避免 iframe 銷毀時拋出異常
+    }
+  }, 1000);
+}
+
+// 控制面板切換，配合優雅縮放動畫
+function switchPanel(targetPanel) {
+  // 隱藏開機引導遮罩
+  const bootPanel = document.getElementById('panel-boot');
+  if (bootPanel) {
+    bootPanel.classList.add('opacity-0');
+    setTimeout(() => {
+      bootPanel.classList.add('hidden');
+    }, 500);
+  }
+
+  [panelDraw, panelWinNormal, panelWinSpecial, panelFail].forEach(p => {
+    if (p) p.classList.add('hidden');
+  });
+  if (targetPanel) targetPanel.classList.remove('hidden');
+  
+  // 關閉可能在運作的特殊Canvas解碼效果
+  if (targetPanel !== panelWinNormal && targetPanel !== panelWinSpecial) {
+    stopSuccessParticles();
+  }
+}
+
+// 按鈕交互：觸發抽獎
+if (drawBtn) {
+  drawBtn.onclick = () => {
+    if (cooldownEndTime && cooldownEndTime > Date.now()) {
+      startCooldownCountdown();
+      return;
+    }
+
+    // 1. 禁用按鈕防止重覆點擊
+    drawBtn.disabled = true;
+    drawBtn.innerText = "正在鏈接安全信道...";
+    
+    setTimeout(() => {
+      executeLotteryDraw(false); // false 表示非管理員測試模式
+      if (drawBtn) {
+        drawBtn.disabled = false;
+        drawBtn.innerText = "嘗試獲取更高一級權限";
+      }
+    }, 1200);
+  };
+}
+
+// 管理員即時免冷卻測試
+window.adminImmediateTest = () => {
+  if (modalAdmin) modalAdmin.classList.add('hidden');
+  executeLotteryDraw(true); // true 表示管理員無冷卻調測模式
+  showToast("管理員測試中繼完成 // BYPASS TESTING COMPLETE");
+};
+
+// 內部重置冷卻邏輯
+function executeCooldownReset() {
+  eraseCooldownData();
+  cooldownEndTime = null;
+  if (window.countdownTimer) {
+    clearInterval(window.countdownTimer);
+    window.countdownTimer = null;
+  }
+  switchPanel(panelDraw);
+  showToast("安全連線冷卻已成功排除 // SECURE RESET DONE");
+}
+
+// 後台管理員直接重置冷卻
+window.resetLocalCooldown = () => {
+  executeCooldownReset();
+  if (modalAdmin) modalAdmin.classList.add('hidden');
+};
+
+// 前端動態顯示的重置按鈕點擊事件
+const drawResetBtn = document.getElementById('draw-reset-btn');
+const failResetBtn = document.getElementById('fail-reset-btn');
+if (drawResetBtn) drawResetBtn.onclick = () => executeCooldownReset();
+if (failResetBtn) failResetBtn.onclick = () => executeCooldownReset();
+
+// ═══════════════════════════════════════════════════
+// 抽獎算法核心與機率核對
+// ═══════════════════════════════════════════════════
+function executeLotteryDraw(isTesting = false) {
+  const rand = Math.random() * 100; // 0 到 100 隨機數
+  
+  // 1. 優先計算超低概率
+  if (rand < localDrawSettings.specialRate) {
+    // 觸發超低中獎！
+    switchPanel(panelWinSpecial);
+    startSuccessParticles('#f59e0b'); // 金色能量粒
+    return;
+  }
+
+  // 2. 計算標準概率 (減去超低概率後核對)
+  if (rand < (localDrawSettings.normalRate + localDrawSettings.specialRate)) {
+    // 觸發普通中獎！
+    switchPanel(panelWinNormal);
+    startSuccessParticles('#10b981'); // 翠綠解碼能量
+    return;
+  }
+
+  // 3. 落空，安全機制冷卻
+  if (!isTesting) {
+    const twoHours = 120 * 60 * 1000; // 120 分鐘
+    cooldownEndTime = Date.now() + twoHours;
+    writeCooldownData(cooldownEndTime);
+    startCooldownCountdown();
+  } else {
+    // 測試模式落空，直接顯示警告，但不設定真的120分鎖定，給予重新測試機會
+    switchPanel(panelFail);
+    const clockEl = document.getElementById('countdown-clock');
+    if (clockEl) clockEl.innerText = "TEST_FAIL";
+    setTimeout(() => {
+      switchPanel(panelDraw);
+    }, 2000);
+  }
+}
+
+// 覆寫回退抽獎頁面函數，同步調校按鈕狀態
+window.backToDraw = () => {
+  switchPanel(panelDraw);
+};
+
+function updateUIState() {
+  // 動態更新前端冷卻重置按鈕的可見性
+  const drawResetBtn = document.getElementById('draw-reset-btn');
+  const failResetBtn = document.getElementById('fail-reset-btn');
+  
+  if (localDrawSettings.showMainResetBtn) {
+    if (drawResetBtn) drawResetBtn.classList.remove('hidden');
+    if (failResetBtn) failResetBtn.classList.remove('hidden');
+  } else {
+    if (drawResetBtn) drawResetBtn.classList.add('hidden');
+    if (failResetBtn) failResetBtn.classList.add('hidden');
+  }
+
+  // 同步管理員返回按鈕狀態
+  updateAdminBypassUI();
+}
+
+// ═══════════════════════════════════════════════════
+// 神奇特效：Canvas 瀑布雨粒子解碼矩陣
+// ═══════════════════════════════════════════════════
+let particles = [];
+function startSuccessParticles(color) {
+  if (!effectCanvas || !effCtx) return;
+  effectCanvas.style.display = 'block';
+  effectCanvas.width = window.innerWidth;
+  effectCanvas.height = window.innerHeight;
+  particles = [];
+
+  const textChars = "0101ATCGNUCLEOTIDEACCESSGRANTEDPRIVILEGED";
+  
+  // 建立流星式下降粒子
+  for(let i=0; i<35; i++) {
+    particles.push({
+      x: Math.random() * effectCanvas.width,
+      y: Math.random() * -effectCanvas.height,
+      speed: Math.random() * 5 + 3,
+      size: Math.random() * 14 + 10,
+      opacity: Math.random() * 0.5 + 0.5,
+      char: textChars[Math.floor(Math.random() * textChars.length)]
+    });
+  }
+
+  function drawEffect() {
+    try {
+      if (!effectCanvas || !effCtx) return;
+      effCtx.clearRect(0, 0, effectCanvas.width, effectCanvas.height);
+      effCtx.font = "bold 12px 'Share Tech Mono'";
+      
+      particles.forEach(p => {
+        effCtx.fillStyle = color;
+        effCtx.globalAlpha = p.opacity;
+        effCtx.fillText(p.char, p.x, p.y);
+        
+        p.y += p.speed;
+        if (Math.random() > 0.9) p.char = textChars[Math.floor(Math.random() * textChars.length)];
+        
+        // 出底重置
+        if(p.y > effectCanvas.height) {
+          p.y = -20;
+          p.x = Math.random() * effectCanvas.width;
+        }
+      });
+      effCtx.globalAlpha = 1.0;
+      window.effectAnimationId = requestAnimationFrame(drawEffect);
+    } catch (e) {
+      // 避免熱更新解構時出錯
+    }
+  }
+  
+  if (window.effectAnimationId) cancelAnimationFrame(window.effectAnimationId);
+  drawEffect();
+}
+
+function stopSuccessParticles() {
+  if (effectCanvas) effectCanvas.style.display = 'none';
+  if (window.effectAnimationId) {
+    cancelAnimationFrame(window.effectAnimationId);
+    window.effectAnimationId = null;
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// 頂部時鐘與系統監控 (全域保護性 Interval，防止 iframe 記憶體洩漏)
+// ═══════════════════════════════════════════════════
+function systemTick(){
+  try {
+    const clkEl = document.getElementById('clk');
+    const cpuEl = document.getElementById('cpu-n');
+    const memEl = document.getElementById('mem-n');
+    
+    if (clkEl) clkEl.innerText = new Date().toLocaleTimeString('zh-TW',{hour12:false});
+    if (cpuEl) cpuEl.innerText = ~~(Math.random()*15+8);
+    if (memEl) memEl.innerText = ~~(Math.random()*5+38);
+  } catch (e) {
+    // 靜默捕獲背景舊線程 DOM 不存在時的 innerText 異常
+  }
+}
+
+if (window.systemTickInterval) {
+  clearInterval(window.systemTickInterval);
+}
+window.systemTickInterval = setInterval(systemTick, 1000);
+systemTick();
+
+// ═══════════════════════════════════════════════════
+// 系統安全初始化引導 (本地快照優先，雲端隨後核驗)
+// ═══════════════════════════════════════════════════
+updateUIState();
+const hasActiveCooldown = checkCooldown();
+// 只有在完全沒有安全冷卻的情況下，才允許展示抽獎主面板
+if (!hasActiveCooldown) {
+  // 延遲 800ms 給雲端握手時間，防止本地 Blob 清空狀態造成誤顯示，若時間內無冷卻則直接解鎖 Draw 頁
+  setTimeout(() => {
+    if (!cooldownEndTime || cooldownEndTime <= Date.now()) {
+      switchPanel(panelDraw);
+    }
+  }, isCloudSynced ? 800 : 100);
+}
+
+</script>
+</body>
+</html>
