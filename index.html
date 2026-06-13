@@ -132,7 +132,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
       <span class="text-3xl text-amber-400">✦</span>
     </div>
     
-    <h3 class="text-amber-400 font-bold tracking-[0.2em] text-lg mb-2">SUPREME ANOMALY DETESS</h3>
+    <h3 class="text-amber-400 font-bold tracking-[0.2em] text-lg mb-2">SUPREME ANOMALY DETECTED</h3>
     <p class="text-amber-200/90 text-xs tracking-widest mb-4">發現超低深度溢出級安全漏洞！</p>
     <p class="text-white text-sm leading-relaxed mb-2 px-2">恭喜你，遇到超低概率權限，可在獲取最高一級權限的情況下額外領取一件禮品，請聯繫管理員領取。</p>
     <div class="text-[10px] text-amber-400/60 tracking-widest mt-4 uppercase animate-pulse">SUPREME PRIVILEGE ACTIVATED PERMANENTLY</div>
@@ -262,56 +262,60 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
 
 <script type="module">
 // ═══════════════════════════════════════════════════
-// FIRBASE INTEGRATION (如果配置存在)
+// FIREBASE INTEGRATION FIX
 // ═══════════════════════════════════════════════════
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-// 本機變數設定，如果不存在 Firebase 則運行在 Local 模式下
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'cyber-lottery-system';
+const appId = 'cyber-lottery-system';
 let db = null;
 let auth = null;
 let isCloudSynced = false;
-let currentUser = null; // 追蹤當前雲端訪客對象，供冷卻時間雲端同步
+let currentUser = null; 
 
-// 預設概率與按鈕顯示狀態
 let localDrawSettings = {
-  normalRate: 15,    // 預設為 15%
-  specialRate: 0.05, // 預設為 0.05%
-  showMainResetBtn: false // 預設不在前台顯示冷卻重置按鈕
+  normalRate: 0,
+  specialRate: 0.05,
+  showMainResetBtn: false
 };
 
-// 安全初始化
+// 安全初始化 - 優化後的防錯處理
 try {
-  if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    const firebaseConfig = JSON.parse(__firebase_config);
-    const app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    isCloudSynced = true;
-    const syncIndicator = document.getElementById('sync-status-indicator');
-    if (syncIndicator) {
-      syncIndicator.innerText = `[ MODE: SECURE REALTIME CLOUD | APPID: ${appId} ]`;
-    }
+  const firebaseConfig = {
+    apiKey: "AIzaSyBwG06hvsQR6UeC1z0DaSHzarwpRrUzua4",
+    authDomain: "jntm-3d817.firebaseapp.com",
+    projectId: "jntm-3d817",
+    storageBucket: "jntm-3d817.firebasestorage.app",
+    messagingSenderId: "658270913018",
+    appId: "1:658270913018:web:393c7406a98635a1e0a443",
+    measurementId: "G-9LNH4H4E9L"
+  };
+  
+  const app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  isCloudSynced = true;
+  
+  const syncIndicator = document.getElementById('sync-status-indicator');
+  if (syncIndicator) {
+    syncIndicator.innerText = `[ MODE: SECURE REALTIME CLOUD | APPID: ${appId} ]`;
   }
 } catch (e) {
-  console.warn("Firebase config not found. Running in standalone secure local mode.", e);
+  console.warn("Firebase configuration error. Falling back to local mode.", e);
+  isCloudSynced = false;
+  db = null;
+  auth = null;
 }
 
-// ═══════════════════════════════════════════════════
-// 授權與實時訂閱 (雲端同步 ＋ 訪客冷卻時間雲端同步)
-// ═══════════════════════════════════════════════════
+// 授權與實時訂閱
 if (isCloudSynced && db && auth) {
   const initAuthAndSync = async () => {
     try {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        currentUser = (await signInWithCustomToken(auth, __initial_auth_token)).user;
-      } else {
-        currentUser = (await signInAnonymously(auth)).user;
-      }
+      // 嘗試匿名登入
+      currentUser = (await signInAnonymously(auth)).user;
       
-      // 1. 監聽雲端概率與設定
+      // 監聽雲端概率
       const settingsDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'drawSettings');
       onSnapshot(settingsDocRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -320,44 +324,27 @@ if (isCloudSynced && db && auth) {
           localDrawSettings.specialRate = Number(data.specialRate);
           localDrawSettings.showMainResetBtn = !!data.showMainResetBtn;
           updateUIState();
-        } else {
-          setDoc(settingsDocRef, localDrawSettings);
+          updateAdminUI();
         }
       }, (err) => {
         console.error("Firestore listen error: ", err);
       });
-
-      // 2. 獲取該用戶在雲端的冷卻數據 (完美應對臨時 Blob/Iframe 刷新清空 LocalStorage 的狀況)
-      if (currentUser) {
-        const userCooldownDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'state', 'cooldown');
-        const cooldownSnap = await getDoc(userCooldownDocRef);
-        if (cooldownSnap.exists()) {
-          const cloudCooldownEnd = Number(cooldownSnap.data().cooldownEndTime);
-          if (cloudCooldownEnd && cloudCooldownEnd > Date.now()) {
-            cooldownEndTime = cloudCooldownEnd;
-            startCooldownCountdown();
-          }
-        }
-      }
-
     } catch (err) {
-      console.error("Auth / Sync error: ", err);
-      isCloudSynced = false; // 退回到本機運作
+      console.warn("Auth failed, falling back to local mode: ", err);
+      isCloudSynced = false;
     } finally {
-      // 延遲關閉開機初始化引導畫面，確保雲端握手完成
       completeSystemBoot();
     }
   };
   initAuthAndSync();
 } else {
-  // Standalone 本地模式：從 LocalStorage 恢復概率 (若有)
+  // Standalone 本地模式
   const savedSettings = localStorage.getItem('draw_settings');
   if (savedSettings) {
     try {
       localDrawSettings = JSON.parse(savedSettings);
     } catch(e) {}
   }
-  // 本地模式沒有異步雲端，直接結束 Boot 載入
   setTimeout(completeSystemBoot, 100);
 }
 
@@ -624,7 +611,7 @@ async function persistSettings() {
 }
 
 window.restoreDefaults = async function() {
-  localDrawSettings = { normalRate: 15, specialRate: 0.05, showMainResetBtn: false };
+  localDrawSettings = { normalRate: 0, specialRate: 0.05, showMainResetBtn: false };
   updateUIState();
   updateAdminUI();
   await persistSettings();
